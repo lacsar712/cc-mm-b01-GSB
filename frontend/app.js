@@ -1,6 +1,7 @@
 const tokenKey = "methane_token";
 let token = localStorage.getItem(tokenKey) || "";
 let role = localStorage.getItem("methane_role") || "";
+let challenge = "";
 
 const loginBox = document.querySelector("#login");
 const appBox = document.querySelector("#app");
@@ -70,16 +71,40 @@ document.querySelector("#go").onclick = async () => {
   showApp();
 };
 
-form.onsubmit = async (e) => {
-  e.preventDefault();
+document.querySelector("#req").onclick = async () => {
   try {
-    await api("/api/readings", {
+    const data = await api("/api/challenges", {
       method: "POST",
       body: JSON.stringify({
         site: document.querySelector("#site").value,
         ch4_pct: Number(document.querySelector("#ch4").value),
       }),
     });
+    challenge = data.challenge;
+    live.textContent = `挑战码 ${challenge}，${data.expires_in} 秒内有效；提交时测点和浓度须与申请时一致`;
+  } catch (err) {
+    live.textContent = err.message;
+  }
+};
+
+form.onsubmit = async (e) => {
+  e.preventDefault();
+  if (!challenge) {
+    live.textContent = "请先申请挑战码";
+    return;
+  }
+  try {
+    await api("/api/readings", {
+      method: "POST",
+      body: JSON.stringify({
+        site: document.querySelector("#site").value,
+        ch4_pct: Number(document.querySelector("#ch4").value),
+        challenge,
+      }),
+    });
+    challenge = "";
+    live.textContent = "上报成功";
+    load();
   } catch (err) {
     live.textContent = err.message;
   }
