@@ -70,6 +70,24 @@ document.querySelector("#go").onclick = async () => {
   showApp();
 };
 
+let challenge = "";
+
+document.querySelector("#apply").onclick = async () => {
+  try {
+    const data = await api("/api/challenges", {
+      method: "POST",
+      body: JSON.stringify({
+        site: document.querySelector("#site").value,
+        ch4_pct: Number(document.querySelector("#ch4").value),
+      }),
+    });
+    challenge = data.challenge;
+    document.querySelector("#chal").textContent = `挑战码 ${challenge}（${data.expires_in} 秒内有效）`;
+  } catch (err) {
+    live.textContent = err.message;
+  }
+};
+
 form.onsubmit = async (e) => {
   e.preventDefault();
   try {
@@ -78,8 +96,11 @@ form.onsubmit = async (e) => {
       body: JSON.stringify({
         site: document.querySelector("#site").value,
         ch4_pct: Number(document.querySelector("#ch4").value),
+        challenge,
       }),
     });
+    challenge = "";
+    document.querySelector("#chal").textContent = "";
   } catch (err) {
     live.textContent = err.message;
   }

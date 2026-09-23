@@ -1,3 +1,5 @@
+import secrets
+import threading
 from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect, status
@@ -52,6 +54,17 @@ class LoginIn(BaseModel):
 class ReadingIn(BaseModel):
     site: str = Field(min_length=1, max_length=80)
     ch4_pct: float
+    challenge: str = Field(min_length=1)
+
+
+class ChallengeIn(BaseModel):
+    site: str = Field(min_length=1, max_length=80)
+    ch4_pct: float
+
+
+CHALLENGE_TTL_SECONDS = 120
+challenges: dict[str, dict] = {}
+challenges_lock = threading.Lock()
 
 
 def current_user(credentials: HTTPAuthorizationCredentials | None = Depends(security)) -> dict:
@@ -140,8 +153,42 @@ def list_readings(_user: dict = Depends(current_user)):
         db.close()
 
 
+@app.post("/api/challenges", status_code=201)
+def create_challenge(body: ChallengeIn, user: dict = Depends(require_writer)):
+    site = body.site.strip()
+    if not site:
+        raise HTTPException(status_code=400, detail="测点不能为空")
+    now = datetime.now(timezone.utc)
+    with challenges_lock:
+        for code in [c for c, v in challenges.items() if v["expires_at"] <= now]:
+            challenges.pop(code, None)
+        code = f"{secrets.randbelow(1000000):06d}"
+        while code in challenges:
+            code = f"{secrets.randbelow(1000000):06d}"
+        challenges[code] = {
+            "username": user["username"],
+            "site": site,
+            "ch4_pct": body.ch4_pct,
+            "expires_at": now + timedelta(seconds=CHALLENGE_TTL_SECONDS),
+            "used": False,
+        }
+    return {"challenge": code, "expires_in": CHALLENGE_TTL_SECONDS}
+
+
 @app.post("/api/readings", status_code=201)
 async def create_reading(body: ReadingIn, user: dict = Depends(require_writer)):
+    now = datetime.now(timezone.utc)
+    with challenges_lock:
+        ch = challenges.get(body.challenge.strip())
+        if ch is None or ch["expires_at"] <= now:
+            raise HTTPException(status_code=400, detail="挑战码无效或已过期")
+        if ch["used"]:
+            raise HTTPException(status_code=400, detail="挑战码已使用")
+        if ch["username"] != user["username"]:
+            raise HTTPException(status_code=403, detail="挑战码不属于当前账号")
+        if ch["site"] != body.site.strip() or ch["ch4_pct"] != body.ch4_pct:
+            raise HTTPException(status_code=400, detail="表单字段与申请挑战码时不一致")
+        ch["used"] = True
     level, note = classify(body.ch4_pct)
     db = SessionLocal()
     try:
